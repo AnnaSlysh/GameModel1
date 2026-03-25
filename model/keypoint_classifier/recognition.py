@@ -109,9 +109,6 @@ def process_letter():
 
 
 
-            # Вивід вгаданих літер і слова зі стилем
-            st.session_state.guessed_placeholder.markdown(f"<div class='text'>👍 Вгадані літери: {', '.join(st.session_state['guessed_letters'])}</div>", unsafe_allow_html=True)
-            st.session_state.word_placeholder.markdown(f"<div class='text'>Слово: {updated_display}</div>", unsafe_allow_html=True)
 
 
 
@@ -127,11 +124,6 @@ def process_letter():
         if letter not in st.session_state["not_guessed_letters"]:
             st.session_state["not_guessed_letters"].append(letter)
             st.session_state["count"] -= 1
-            # Оновлення зображення за кількістю помилок
-            images = st.session_state["images"]
-            img_index = max(0, min(len(images) - 1, len(images) - st.session_state["count"]))
-            svg_path = images[img_index]
-            st.session_state.image_placeholder.image(svg_path, width=250)
 
 
 
@@ -139,7 +131,6 @@ def process_letter():
 
 
 
-            st.session_state.not_guessed_placeholder.markdown(f"<div class='text'>👎 Невгадані літери: {', '.join(st.session_state['not_guessed_letters'])}</div>", unsafe_allow_html=True)
 
 
 
@@ -757,6 +748,58 @@ def draw_info(image, fps, mode):
     cv.putText(image, "FPS:" + str(fps), (10, 30), cv.FONT_HERSHEY_SIMPLEX,
                1.0, (255, 255, 255), 2, cv.LINE_AA)
     return image
+
+
+def process_frame(img_file_buffer):
+    """Process a single frame from st.camera_input() for browser-based deployment."""
+    import PIL.Image
+    import io
+
+    bytes_data = img_file_buffer.getvalue()
+    pil_image = PIL.Image.open(io.BytesIO(bytes_data)).convert("RGB")
+    image = np.array(pil_image)
+    image = cv.cvtColor(image, cv.COLOR_RGB2BGR)
+
+    debug_image = copy.deepcopy(image)
+
+    mp_hands = mp.solutions.hands
+    hands = mp_hands.Hands(
+        static_image_mode=True,
+        max_num_hands=1,
+        min_detection_confidence=0.7,
+        min_tracking_confidence=0.5,
+    )
+
+    keypoint_classifier = KeyPointClassifier()
+    with open('model/keypoint_classifier/keypoint_classifier_label.csv', encoding='utf-8-sig') as f:
+        keypoint_classifier_labels = [row[0] for row in csv.reader(f)]
+
+    image_rgb = cv.cvtColor(image, cv.COLOR_BGR2RGB)
+    results = hands.process(image_rgb)
+
+    detected_letter = None
+
+    if results.multi_hand_landmarks is not None:
+        for hand_landmarks, handedness in zip(results.multi_hand_landmarks, results.multi_handedness):
+            brect = calc_bounding_rect(debug_image, hand_landmarks)
+            landmark_list = calc_landmark_list(debug_image, hand_landmarks)
+            pre_processed_landmark_list = pre_process_landmark(landmark_list)
+
+            hand_sign_id = keypoint_classifier(pre_processed_landmark_list)
+            label = keypoint_classifier_labels[hand_sign_id]
+            ukrainian_letter = returnUkrainanLetter(label)
+
+            debug_image = draw_bounding_rect(True, debug_image, brect)
+            debug_image = draw_landmarks(debug_image, landmark_list)
+            cv.rectangle(debug_image, (brect[0], brect[1]), (brect[2], brect[1] - 22), (0, 0, 0), -1)
+            info_text = handedness.classification[0].label[0:] + ':' + label
+            cv.putText(debug_image, info_text, (brect[0] + 5, brect[1] - 4),
+                       cv.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv.LINE_AA)
+
+            detected_letter = ukrainian_letter.upper()
+
+    hands.close()
+    return detected_letter, debug_image
 
 
 
